@@ -857,12 +857,12 @@ type funcinl struct {
 // allocated in non-garbage-collected memory
 // Needs to be in sync with
 // ../cmd/compile/internal/gc/reflect.go:/^func.dumptabs.
-type itab struct {
-	inter *interfacetype
-	_type *_type
-	hash  uint32 // copy of _type.hash. Used for type switches.
+type itab struct { // 接口类型的核心组成部分，每一个 runtime.itab 都占 32 字节，可以将其看成接口类型和具体类型的组合，它们分别用 inter 和 _type 两个字段表示
+	inter *interfacetype // 接口类型
+	_type *_type         // 结构体类型
+	hash  uint32         // copy of _type.hash. Used for type switches. //hash 是对 _type.hash 的拷贝
 	_     [4]byte
-	fun   [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
+	fun   [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.  // 一个动态大小的数组,用于动态派发的虚函数表，存储了一组函数指针
 }
 
 // Lock-free stack node.
@@ -943,13 +943,13 @@ type _defer struct {
 // _panic values only live on the stack, regular stack pointer
 // adjustment takes care of them.
 type _panic struct {
-	argp      unsafe.Pointer // pointer to arguments of deferred call run during panic; cannot move - known to liblink
-	arg       interface{}    // argument to panic
-	link      *_panic        // link to earlier panic
+	argp      unsafe.Pointer // pointer to arguments of deferred call run during panic; cannot move - known to liblink //指向 defer 调用时参数的指针；
+	arg       interface{}    // argument to panic    //调用 panic 时传入的参数
+	link      *_panic        // link to earlier panic  //指向了更早调用的 runtime._panic 结构；
 	pc        uintptr        // where to return to in runtime if this panic is bypassed
 	sp        unsafe.Pointer // where to return to in runtime if this panic is bypassed
-	recovered bool           // whether this panic is over
-	aborted   bool           // the panic was aborted
+	recovered bool           // whether this panic is over          //当前 runtime._panic 是否被 recover 恢复；
+	aborted   bool           // the panic was aborted               // 当前的 panic 是否被强行终止；
 	goexit    bool
 }
 

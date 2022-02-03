@@ -256,7 +256,7 @@ func deferproc(siz int32, fn *funcval) { // arguments of fn follow fn
 
 	// deferproc returns 0 normally.
 	// a deferred func that stops a panic
-	// makes the deferproc return 1.
+	// makes the deferproc return 1.                // 当 runtime.deferproc 函数的返回值是 1 时，编译器生成的代码会直接跳转到调用方函数返回之前并执行 runtime.deferreturn
 	// the code the compiler generates always
 	// checks the return value and jumps to the
 	// end of the function if deferproc returns != 0.
@@ -916,7 +916,7 @@ func gopanic(e interface{}) {
 	var p _panic
 	p.arg = e
 	p.link = gp._panic
-	gp._panic = (*_panic)(noescape(unsafe.Pointer(&p)))
+	gp._panic = (*_panic)(noescape(unsafe.Pointer(&p))) // 创建新的 runtime._panic 并添加到所在 Goroutine 的 _panic 链表的最前面；
 
 	atomic.Xadd(&runningPanicDefers, 1)
 
@@ -924,7 +924,7 @@ func gopanic(e interface{}) {
 	// gopanic frame (stack scanning is slow...)
 	addOneOpenDeferFrame(gp, getcallerpc(), unsafe.Pointer(getcallersp()))
 
-	for {
+	for { // 在循环中不断从当前 Goroutine 的 _defer 中链表获取 runtime._defer 并调用 runtime.reflectcall 运行延迟调用函数；
 		d := gp._defer
 		if d == nil {
 			break
@@ -968,7 +968,7 @@ func gopanic(e interface{}) {
 			}
 		} else {
 			p.argp = unsafe.Pointer(getargp(0))
-			reflectcall(nil, unsafe.Pointer(d.fn), deferArgs(d), uint32(d.siz), uint32(d.siz))
+			reflectcall(nil, unsafe.Pointer(d.fn), deferArgs(d), uint32(d.siz), uint32(d.siz)) //运行defer函数,所以如果recover()不在defer中的话无法恢复
 		}
 		p.argp = nil
 
@@ -981,6 +981,7 @@ func gopanic(e interface{}) {
 		// trigger shrinkage to test stack copy. See stack_test.go:TestStackPanic
 		//GC()
 
+		//.... 上面执行延迟调用函数	reflectcall，可能会设置 p.recovered = true
 		pc := d.pc
 		sp := unsafe.Pointer(d.sp) // must be pointer so it gets adjusted during stack copy
 		if done {
@@ -996,7 +997,7 @@ func gopanic(e interface{}) {
 				gp.sigcode0 = uintptr(gp._panic.sp)
 				gp.sigcode1 = uintptr(gp._panic.pc)
 				mcall(recovery)
-				throw("bypassed recovery failed") // mcall should not return
+				throw("bypassed recovery failed") // mcall should not return -->直接由pc和地址跳转到defer位置
 			}
 			atomic.Xadd(&runningPanicDefers, -1)
 
@@ -1062,7 +1063,7 @@ func gopanic(e interface{}) {
 	// and String methods to prepare the panic strings before startpanic.
 	preprintpanics(gp._panic)
 
-	fatalpanic(gp._panic) // should not return
+	fatalpanic(gp._panic) // should not return   // 整个goroutine的defer处理完以后，调用 runtime.fatalpanic 中止整个程序,打印panic信息
 	*(*int)(nil) = 0      // not reached
 }
 
@@ -1082,7 +1083,7 @@ func getargp(x int) uintptr {
 // TODO(rsc): Once we commit to CopyStackAlways,
 // this doesn't need to be nosplit.
 //go:nosplit
-func gorecover(argp uintptr) interface{} {
+func gorecover(argp uintptr) interface{} { //崩溃恢复
 	// Must be in a function running as part of a deferred call during the panic.
 	// Must be called from the topmost function of the call
 	// (the function used in the defer statement).
@@ -1091,10 +1092,10 @@ func gorecover(argp uintptr) interface{} {
 	// If they match, the caller is the one who can recover.
 	gp := getg()
 	p := gp._panic
-	if p != nil && !p.goexit && !p.recovered && argp == uintptr(p.argp) {
+	if p != nil && !p.goexit && !p.recovered && argp == uintptr(p.argp) { //如果当前 Goroutine 没有调用 panic，那么该函数会直接返回 nil，这也是崩溃恢复在非 defer 中调用会失效的原因
 		p.recovered = true
 		return p.arg
-	}
+	} // runtime.gorecover 函数中并不包含恢复程序的逻辑，程序的恢复是由 runtime.gopanic 函数负责的
 	return nil
 }
 
@@ -1134,7 +1135,7 @@ var paniclk mutex
 // Unwind the stack after a deferred function calls recover
 // after a panic. Then arrange to continue running as though
 // the caller of the deferred function returned normally.
-func recovery(gp *g) {
+func recovery(gp *g) { //被defer内联优化了
 	// Info about defer passed in G struct.
 	sp := gp.sigcode0
 	pc := gp.sigcode1
@@ -1152,7 +1153,7 @@ func recovery(gp *g) {
 	gp.sched.pc = pc
 	gp.sched.lr = 0
 	gp.sched.ret = 1
-	gogo(&gp.sched)
+	gogo(&gp.sched) // 由pc跳转
 }
 
 // fatalthrow implements an unrecoverable runtime throw. It freezes the
@@ -1187,7 +1188,7 @@ func fatalthrow() {
 // runningPanicDefers once main is blocked from exiting.
 //
 //go:nosplit
-func fatalpanic(msgs *_panic) {
+func fatalpanic(msgs *_panic) { //实现了无法被恢复的程序崩溃，它在中止程序之前会通过 runtime.printpanics 打印出全部的 panic 消息以及调用时传入的参数：
 	pc := getcallerpc()
 	sp := getcallersp()
 	gp := getg()
